@@ -1,0 +1,9 @@
+growwapi
+pyotp
+streamlit
+pandas
+numpy
+scikit-learn
+pandas-ta
+matplotlib
+plotly
