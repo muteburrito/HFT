@@ -5,7 +5,10 @@ from groww_client import GrowwClient
 from strategy import StrategyEngine
 from database import Database
 import config
-import pandas as pd
+from ui import dashboard, option_chain, trades, strategy_explanation
+from logger import setup_logger
+
+logger = setup_logger(__name__)
 
 # Page Config
 st.set_page_config(
@@ -130,89 +133,24 @@ def render_dashboard():
         with col4:
             st.metric("Next Expiry", expiry_str)
 
+        # Run Analysis ONCE for all tabs
+        analysis = st.session_state.strategy.execute_strategy()
+
         # Tabs
-        tab1, tab2, tab3 = st.tabs(["Live Dashboard", "Option Chain", "Trades"])
+        tab1, tab2, tab3, tab4 = st.tabs(["Live Dashboard", "Option Chain", "Trades", "Strategy Explained"])
 
         with tab1:
-            st.subheader("Market Analysis")
-            
-            # Auto-run analysis if refresh is on
-            analysis = st.session_state.strategy.execute_strategy()
-            ltp = analysis.get('ltp', 0)
-            chain = analysis.get('chain')
-            
-            col_a, col_b, col_c = st.columns(3)
-            with col_a:
-                st.metric("Nifty LTP", f"₹{ltp}")
-            with col_b:
-                st.metric("Combined Signal", analysis.get('signal', 'NEUTRAL'))
-            with col_c:
-                st.metric("PCR", f"{analysis.get('pcr', 0):.2f}")
-
-            # Detailed Signal Breakdown
-            with st.expander("Signal Breakdown", expanded=True):
-                s_col1, s_col2, s_col3 = st.columns(3)
-                s_col1.info(f"ML Model: {analysis.get('ml_signal', 'WAITING')}")
-                s_col2.info(f"Option Chain (PCR): {analysis.get('pcr_signal', 'WAITING')}")
-                s_col3.info(f"Live Trend: {analysis.get('live_trend', 'WAITING')}")
-            
-            if chain is not None and not chain.empty:
-                # Find ATM Strike
-                chain['diff'] = abs(chain['strike_price'] - ltp)
-                atm_row = chain.loc[chain['diff'].idxmin()]
-                
-                st.subheader(f"ATM Greeks (Strike: {atm_row['strike_price']})")
-                
-                g_col1, g_col2 = st.columns(2)
-                with g_col1:
-                    st.markdown("### Call (CE)")
-                    st.write(f"**Delta:** {atm_row['ce_delta']:.2f}")
-                    st.write(f"**Theta:** {atm_row.get('ce_theta', 0):.2f}") # Assuming theta might be missing in mock if not added
-                    st.write(f"**IV:** {atm_row['ce_iv']:.2f}%")
-                    st.write(f"**OI:** {atm_row['ce_oi']}")
-                    
-                with g_col2:
-                    st.markdown("### Put (PE)")
-                    st.write(f"**Delta:** {atm_row['pe_delta']:.2f}")
-                    st.write(f"**Theta:** {atm_row.get('pe_theta', 0):.2f}")
-                    st.write(f"**IV:** {atm_row['pe_iv']:.2f}%")
-                    st.write(f"**OI:** {atm_row['pe_oi']}")
-                
-            st.subheader("Live Signals")
-            st.info(f"Scanning market... Last update: {datetime.now().strftime('%H:%M:%S')}")
+            dashboard.render(analysis)
 
         with tab2:
-            st.subheader("Option Chain Data")
-            if chain is not None:
-                # Highlight ATM
-                def highlight_atm(row):
-                    if row['strike_price'] == atm_row['strike_price']:
-                        return ['background-color: #ffffb3'] * len(row)
-                    return [''] * len(row)
-                    
-                st.dataframe(chain.drop(columns=['diff']).style.apply(highlight_atm, axis=1))
-            else:
-                st.write("No Data Available")
+            option_chain.render(analysis)
 
         with tab3:
-            st.subheader("Trade Log")
-            trades = st.session_state.db.get_trades()
-            
-            if not trades.empty:
-                # Style the dataframe
-                def color_pnl(val):
-                    if pd.isna(val):
-                        return ''
-                    color = 'green' if val > 0 else 'red' if val < 0 else 'black'
-                    return f'color: {color}'
+            trades.render(st.session_state.db)
 
-                # Ensure pnl column exists (for old data)
-                if 'pnl' not in trades.columns:
-                    trades['pnl'] = None
+        with tab4:
+            strategy_explanation.render()
 
-                st.dataframe(trades.style.map(color_pnl, subset=['pnl']))
-            else:
-                st.info("No trades executed yet.")
 
 # Initial Render
 render_dashboard()

@@ -11,3 +11,6 @@ GST_RATE = 0.18 # 18% on brokerage
 
 # Database
 DB_PATH = "trading_data.db"
+
+# Logging
+ENABLE_DEBUG_LOGS = False # Set to True to see debug messages

@@ -1,18 +1,23 @@
 # Nifty 50 Option Chain Algo Trader
 
-This is a lightweight, single-user algorithmic trading application for Nifty 50 options using the Groww API. It features a real-time dashboard, automated strategy execution (simulation mode), and secure credential management.
+This is a sophisticated algorithmic trading application for Nifty 50 options, powered by the Groww API. It combines Machine Learning, Technical Analysis, and Option Chain sentiment to make high-probability trading decisions.
 
-## Features
+## 🚀 Key Features
 
-- **Live Dashboard**: Built with Streamlit for real-time visualization of Nifty 50 Option Chain and Greeks.
-- **Secure Auth**: Credentials are stored locally in an encrypted SQLite database, not in the code.
-- **Strategy Engine**:
-  - **PCR Analysis**: Real-time Put-Call Ratio calculation.
-  - **Simulation Mode**: Paper trade strategies without risking real capital.
-  - **ATM Greeks**: Live monitoring of Delta, Theta, and IV for At-The-Money strikes.
-- **Database**: Uses SQLite (`trading_data.db`) for persisting credentials and logging trades.
+- **Real-Time Data**: Fetches live Option Chain and Historical Candle data directly from Groww API (No mock data).
+- **Confluence Strategy**: Trades are only taken when three independent systems agree:
+  1. **Trend Filter**: 50 SMA & 20 SMA Crossover logic.
+  2. **ML Model**: Random Forest Classifier (Bullish/Bearish/Neutral) trained on Price Action & Indicators.
+  3. **Sentiment Analysis**: Put-Call Ratio (PCR) from the live Option Chain.
+- **Interactive Dashboard**:
+  - **Live Analysis**: Real-time signals for ML, Trend, and PCR.
+  - **Strategy Explained**: A dedicated tab explaining exactly *why* the bot is making decisions.
+  - **Option Chain**: Visual representation of the current chain with ATM highlighting.
+  - **Trade Log**: History of all paper trades with PnL tracking.
+- **Paper Trading**: Fully simulated execution engine to test strategies without risking capital.
+- **Robust Logging**: Centralized logging system with configurable debug levels.
 
-## Setup
+## 🛠️ Setup & Installation
 
 1. **Install Dependencies**:
 
@@ -20,31 +25,64 @@ This is a lightweight, single-user algorithmic trading application for Nifty 50 
     pip install -r requirements.txt
     ```
 
-2. **Run the App**:
+2. **Run the Application**:
 
     ```bash
     streamlit run app.py
     ```
 
 3. **First Time Login**:
+
     - The app will launch in your browser.
     - Go to the **Sidebar** > **API Credentials**.
     - Enter your Groww **TOTP Token (API Key)** and **TOTP Secret**.
     - Click **Save Credentials**.
     - Click **Login to Groww** to start the session.
 
-## Configuration
+## ⚙️ Configuration
 
-- **Trading Settings**: You can adjust Capital and Target Profit directly in the sidebar.
-- **Advanced Config**: Edit `config.py` to change default symbols or risk parameters (Stop Loss, etc.).
+Edit `config.py` to adjust trading parameters:
 
-## Strategy
+- **`CAPITAL`**: Starting capital for paper trading.
+- **`TARGET_PROFIT`**: Daily profit target to stop trading.
+- **`ENABLE_DEBUG_LOGS`**: Set to `True` to see detailed analysis logs in the console, or `False` for a clean output.
 
-The current strategy in `strategy.py` includes:
+## 🧠 Strategy Logic
 
-- **PCR Analysis**: Checks the Put-Call Ratio to determine market sentiment (Bullish/Bearish).
-- **Prediction Model**: A scaffold for a Random Forest Classifier using RSI and Moving Averages.
+The bot uses a **"Committee of Experts"** approach. It requires confluence from multiple sources:
 
-## Disclaimer
+1. **The Trend Filter (Conservative)**:
+    - Uses SMA 50 (Long Term) and SMA 20 (Short Term).
+    - **Bullish**: Price > SMA 50 AND SMA 20 > SMA 50.
+    - **Bearish**: Price < SMA 50 AND SMA 20 < SMA 50.
 
-Trading options involves high risk. This software is for educational purposes. Ensure you test thoroughly with paper trading before using real capital.
+2. **The ML Model (Pattern Recognition)**:
+    - **Algorithm**: Random Forest Classifier.
+    - **Features**: RSI, MACD, ADX, ATR, Bollinger Bands, **Candle Color**, **Wicks**, **Body Size**.
+    - **Output**: Predicts if the *next* candle will be Bullish, Bearish, or Neutral.
+
+3. **Option Chain (Sentiment)**:
+    - Calculates PCR (Put Call Ratio).
+    - **Bullish**: PCR > 1.2 (Support building).
+    - **Bearish**: PCR < 0.8 (Resistance building).
+
+## 📂 Project Structure
+
+```text
+├── app.py                 # Main Streamlit Application
+├── config.py              # Configuration Settings
+├── database.py            # SQLite Database Manager
+├── groww_client.py        # Groww API Client (Real Data)
+├── logger.py              # Centralized Logging System
+├── strategy.py            # Core Trading Logic & ML Model
+├── ui/                    # UI Modules
+│   ├── dashboard.py       # Live Analysis Dashboard
+│   ├── option_chain.py    # Option Chain Visualization
+│   ├── trades.py          # Trade Log View
+│   └── strategy_explanation.py # Educational Tab
+└── requirements.txt       # Python Dependencies
+```
+
+## ⚠️ Disclaimer
+
+This software is for **educational purposes only**. Algorithmic trading involves significant risk. The authors are not responsible for any financial losses incurred while using this software. Always test thoroughly in simulation mode before considering real money.

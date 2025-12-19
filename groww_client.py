@@ -5,6 +5,9 @@ from datetime import datetime, timedelta
 import random
 
 import config
+from logger import setup_logger
+
+logger = setup_logger(__name__)
 
 class GrowwClient:
     def __init__(self):
@@ -31,7 +34,7 @@ class GrowwClient:
                 totp_secret = self.db.get_credential("TOTP_SECRET")
                 
             if not api_key or not totp_secret:
-                print("Credentials not found in Database.")
+                logger.error("Credentials not found in Database.")
                 return False
 
             # Always use TOTP Exchange Flow
@@ -45,9 +48,8 @@ class GrowwClient:
             return True
 
         except Exception as e:
-            print(f"Login failed: {e}")
-            # Fallback to Mock for UI testing if login fails
-            self.api = "MOCK_API_OBJECT"
+            logger.error(f"Login failed: {e}")
+            self.api = None
             return False
 
     def get_next_expiry(self, symbol="NIFTY"):
@@ -74,85 +76,36 @@ class GrowwClient:
             self.login(self.db)
 
         # Determine if we are in Mock mode
+        is_mock = False
         if self.api == "MOCK_API_OBJECT" or self.api is None:
             is_mock = True
-        else:
-            is_mock = False
             
         try:
             if not is_mock:
                 # REAL API CALL
+                logger.debug(f"Fetching REAL Option Chain for {symbol} Expiry: {expiry_date}")
                 response = self.api.get_option_chain(
                     exchange=GrowwAPI.EXCHANGE_NSE,
                     underlying=symbol,
                     expiry_date=expiry_date
                 )
             else:
-                raise Exception("Using Mock Data")
+                # Only use mock if we are strictly in mock mode (login failed)
+                raise Exception("API Not Connected (Mock Mode)")
 
         except Exception as e:
-            if not is_mock:
-                print(f"Error fetching real option chain: {e}. Falling back to mock.")
-            
-            # MOCK RESPONSE
-            # Updated to be closer to real market price (~25800)
-            response = {
-                # "underlying_ltp": 25845.0,
-                "strikes": {}
-            }
-            # Generate some mock strikes around LTP
-            base_ltp = 25845 + random.randint(-20, 20)
-            response["underlying_ltp"] = base_ltp
-            
-            # Nifty strikes are usually in multiples of 50
-            start_strike = (int(base_ltp) // 50 * 50) - 500
-            end_strike = (int(base_ltp) // 50 * 50) + 500
-            
-            for strike in range(start_strike, end_strike, 50):
-                # Simulate realistic pricing
-                dist = strike - base_ltp
-                
-                # Call Price (Intrinsic + Time Value)
-                ce_intrinsic = max(0, base_ltp - strike)
-                ce_time_value = max(0, 200 - abs(dist)*0.2) # Decay as we move away
-                ce_ltp = ce_intrinsic + ce_time_value
-                
-                # Put Price
-                pe_intrinsic = max(0, strike - base_ltp)
-                pe_time_value = max(0, 200 - abs(dist)*0.2)
-                pe_ltp = pe_intrinsic + pe_time_value
-
-                response["strikes"][str(strike)] = {
-                    "CE": {
-                        "ltp": round(ce_ltp, 2),
-                        "open_interest": random.randint(50000, 500000),
-                        "volume": random.randint(1000, 100000),
-                        "greeks": {
-                            "delta": round(0.5 + (base_ltp - strike)/1000, 2), # Rough delta approx
-                            "gamma": 0.001, 
-                            "theta": -15.5, 
-                            "vega": 12.5, 
-                            "iv": 14.5
-                        }
-                    },
-                    "PE": {
-                        "ltp": round(pe_ltp, 2),
-                        "open_interest": random.randint(50000, 500000),
-                        "volume": random.randint(1000, 100000),
-                        "greeks": {
-                            "delta": round(-0.5 + (base_ltp - strike)/1000, 2),
-                            "gamma": 0.001, 
-                            "theta": -15.5, 
-                            "vega": 12.5, 
-                            "iv": 15.2
-                        }
-                    }
-                }
+            logger.error(f"Error fetching real option chain: {e}")
+            return pd.DataFrame(), 0.0
             
         # Parse Response (Common for both Real and Mock)
         try:
             rows = []
             underlying_ltp = response.get("underlying_ltp", 0)
+            
+            # Check if response is valid
+            if not response or "strikes" not in response:
+                logger.error("Invalid Option Chain Response")
+                return pd.DataFrame(), 0.0
             
             for strike, data in response.get("strikes", {}).items():
                 ce = data.get("CE", {})
@@ -185,12 +138,12 @@ class GrowwClient:
             return df, underlying_ltp
 
         except Exception as e:
-            print(f"Error fetching option chain: {e}")
+            logger.error(f"Error parsing option chain: {e}")
             return pd.DataFrame(), 0.0
 
     def place_order(self, symbol, qty, side, price=None):
         # Wrapper for placing order
-        print(f"Placing {side} order for {symbol} qty {qty} at {price}")
+        logger.info(f"Placing {side} order for {symbol} qty {qty} at {price}")
         
         # Calculate Charges
         brokerage = config.BROKERAGE_PER_ORDER
@@ -270,56 +223,130 @@ class GrowwClient:
     def get_historical_data(self, symbol="NIFTY", interval="5m"):
         """
         Fetches historical data. 
-        Generates mock 5-minute candle data for the last 5 days to ensure enough data for ML.
+        Tries to fetch REAL data from API first. Falls back to mock if API fails.
         """
-        # In a real scenario, you would call self.api.get_historical_data(...)
-        
-        # Generate Mock Data for last 5 days
+        # Auto-login if needed
+        if self.api is None:
+            self.login(self.db)
+
+        # 1. Try Real API
+        if self.api and self.api != "MOCK_API_OBJECT":
+            try:
+                logger.debug(f"Fetching real historical data for {symbol}...")
+                
+                # Map interval to GrowwAPI constants
+                interval_map = {
+                    "1m": GrowwAPI.CANDLE_INTERVAL_MIN_1,
+                    "5m": GrowwAPI.CANDLE_INTERVAL_MIN_5,
+                    "15m": GrowwAPI.CANDLE_INTERVAL_MIN_15,
+                    "30m": GrowwAPI.CANDLE_INTERVAL_MIN_30,
+                    "1h": GrowwAPI.CANDLE_INTERVAL_HOUR_1,
+                    "1d": GrowwAPI.CANDLE_INTERVAL_DAY
+                }
+                api_interval = interval_map.get(interval, GrowwAPI.CANDLE_INTERVAL_MIN_5)
+                
+                # Calculate time range (last 30 days) - API limit for 5m is 30 days
+                end_dt = datetime.now()
+                start_dt = end_dt - timedelta(days=30)
+                
+                # Format dates as required by API
+                # Try including time component if date-only fails
+                start_str = start_dt.strftime("%Y-%m-%d %H:%M:%S")
+                end_str = end_dt.strftime("%Y-%m-%d %H:%M:%S")
+                
+                # Determine Symbol and Segment
+                # For NIFTY, we want the Index data
+                if symbol == "NIFTY":
+                    # The API requires 'Exchange-TradingSymbol' format
+                    target_symbol = "NSE-NIFTY"
+                    segment = GrowwAPI.SEGMENT_CASH # Indices are in Cash segment
+                else:
+                    # For other symbols, ensure format
+                    if "-" not in symbol:
+                        target_symbol = f"NSE-{symbol}"
+                    else:
+                        target_symbol = symbol
+                    segment = GrowwAPI.SEGMENT_FNO
+                
+                # print(f"Requesting History for: {target_symbol} (Segment: {segment})")
+
+                # Fetch data
+                response = self.api.get_historical_candles(
+                    exchange=GrowwAPI.EXCHANGE_NSE,
+                    segment=segment,
+                    groww_symbol=target_symbol,
+                    start_time=start_str,
+                    end_time=end_str,
+                    candle_interval=api_interval
+                )
+                
+                # Extract candles list from response
+                candles = []
+                if isinstance(response, list):
+                    candles = response
+                elif isinstance(response, dict):
+                    # Try common keys
+                    if 'candles' in response and response['candles']:
+                        candles = response['candles']
+                    elif 'data' in response and response['data']:
+                        candles = response['data']
+                
+                if candles:
+                    # Standardize columns
+                    # API might return: 'date', 'open', 'high', 'low', 'close', 'volume'
+                    # We need 'datetime' index and lowercase columns
+                    
+                    data_list = []
+                    for c in candles:
+                        # Handle list format (common in financial APIs)
+                        if isinstance(c, list):
+                            # Assuming [ts, o, h, l, c, v]
+                            # Timestamp might be unix or string
+                            ts = c[0]
+                            if isinstance(ts, (int, float)):
+                                dt = datetime.fromtimestamp(ts)
+                            else:
+                                dt = pd.to_datetime(ts)
+                                
+                            data_list.append({
+                                "datetime": dt,
+                                "open": float(c[1]) if c[1] is not None else 0.0,
+                                "high": float(c[2]) if c[2] is not None else 0.0,
+                                "low": float(c[3]) if c[3] is not None else 0.0,
+                                "close": float(c[4]) if c[4] is not None else 0.0,
+                                "volume": float(c[5]) if len(c) > 5 and c[5] is not None else 0.0
+                            })
+                        elif isinstance(c, dict):
+                            # Handle dict format
+                            data_list.append({
+                                "datetime": pd.to_datetime(c.get('time') or c.get('date')),
+                                "open": float(c.get('open') or 0),
+                                "high": float(c.get('high') or 0),
+                                "low": float(c.get('low') or 0),
+                                "close": float(c.get('close') or 0),
+                                "volume": float(c.get('volume') or 0)
+                            })
+
+                    if data_list:
+                        df = pd.DataFrame(data_list)
+                        df.set_index('datetime', inplace=True)
+                        # print(f"Successfully fetched {len(df)} real candles.")
+                        return df
+                    
+            except Exception as e:
+                logger.error(f"Error fetching real historical data: {e}")
+                logger.error("Real data fetch failed.")
+                return pd.DataFrame() # Return empty to indicate failure
+
+        # 2. Mock Data Generation (Fallback) - REMOVED as per user request
+        # If we reach here, it means API is not connected or failed, and we should NOT use mock data.
+        logger.warning("Real Data Fetch Failed. Returning Empty DataFrame. Please Login.")
+
+        """
+        # OLD MOCK DATA CODE (Disabled)
+        # Generate Mock Data for last 60 days
         data = []
         price = 25800.0 # Starting price
-        
-        end_time = datetime.now()
-        # Start 5 days ago
-        start_date = end_time.date() - timedelta(days=5)
-        
-        current_date = start_date
-        while current_date <= end_time.date():
-            # Skip weekends
-            if current_date.weekday() >= 5:
-                current_date += timedelta(days=1)
-                continue
-                
-            # Market hours 9:15 to 15:30
-            day_start = datetime.combine(current_date, datetime.strptime("09:15", "%H:%M").time())
-            day_end = datetime.combine(current_date, datetime.strptime("15:30", "%H:%M").time())
-            
-            # If today, stop at current time
-            if current_date == end_time.date():
-                day_end = min(day_end, end_time)
-            
-            current_ts = day_start
-            while current_ts <= day_end:
-                open_p = price + random.uniform(-20, 20)
-                high_p = open_p + random.uniform(0, 30)
-                low_p = open_p - random.uniform(0, 30)
-                close_p = random.uniform(low_p, high_p)
-                volume = random.randint(1000, 50000)
-                
-                data.append({
-                    "datetime": current_ts,
-                    "open": open_p,
-                    "high": high_p,
-                    "low": low_p,
-                    "close": close_p,
-                    "volume": volume
-                })
-                
-                price = close_p # Next candle starts around previous close
-                current_ts += timedelta(minutes=5)
-                
-            current_date += timedelta(days=1)
-
-        df = pd.DataFrame(data)
-        if not df.empty:
-            df.set_index("datetime", inplace=True)
-        return df
+        ...
+        """
+        return pd.DataFrame()

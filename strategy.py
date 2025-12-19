@@ -4,6 +4,9 @@ import numpy as np
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 import config
+from logger import setup_logger
+
+logger = setup_logger(__name__)
 
 class StrategyEngine:
     def __init__(self, client, db):
@@ -31,63 +34,126 @@ class StrategyEngine:
         bb = ta.bbands(df['close'], length=20)
         if bb is not None:
             df = pd.concat([df, bb], axis=1)
+        else:
+            logger.warning("Bollinger Bands could not be calculated.")
+
         
+        # ADX (Trend Strength)
+        adx = ta.adx(df['high'], df['low'], df['close'], length=14)
+        if adx is not None:
+            df = pd.concat([df, adx], axis=1)
+
+        # ATR (Volatility)
+        df['ATR'] = ta.atr(df['high'], df['low'], df['close'], length=14)
+
+        # Moving Averages
         df['SMA_20'] = ta.sma(df['close'], length=20)
         df['SMA_50'] = ta.sma(df['close'], length=50)
         
+        # Momentum / Returns
+        df['Returns'] = df['close'].pct_change()
+        df['RSI_Slope'] = df['RSI'].diff()
+        
+        # Candle Patterns (Price Action)
+        df['Body_Size'] = abs(df['close'] - df['open'])
+        df['Upper_Wick'] = df['high'] - np.maximum(df['close'], df['open'])
+        df['Lower_Wick'] = np.minimum(df['close'], df['open']) - df['low']
+        df['Candle_Color'] = np.where(df['close'] > df['open'], 1, -1) # 1 Green, -1 Red
+
         return df
 
     def train_prediction_model(self, historical_data):
-        # Simple Random Forest model to predict direction
+        # Enhanced Random Forest model to predict direction
         # historical_data should have OHLCV
-        if historical_data is None or len(historical_data) < 100:
-            print("Not enough data to train model")
+        if historical_data is None or len(historical_data) < 200:
+            logger.warning("Not enough data to train model (Need > 200 candles)")
             return
 
         # Feature Engineering
         df = self.prepare_features(historical_data)
         
-        # Target: 1 if next candle close > current close, else 0
-        df['Target'] = np.where(df['close'].shift(-1) > df['close'], 1, 0)
+        # Target: 3-Class Classification
+        # 1: Bullish (Next Close > Current Close + Threshold)
+        # -1: Bearish (Next Close < Current Close - Threshold)
+        # 0: Neutral (Sideways)
+        
+        threshold = 0.0002 # 0.02% move required to be significant
+        
+        conditions = [
+            (df['close'].shift(-1) > df['close'] * (1 + threshold)),
+            (df['close'].shift(-1) < df['close'] * (1 - threshold))
+        ]
+        choices = [1, -1]
+        df['Target'] = np.select(conditions, choices, default=0)
         
         df.dropna(inplace=True)
         
         # Features used for the model
-        features = ['RSI', 'SMA_20', 'SMA_50', 'MACD_12_26_9', 'MACDh_12_26_9', 'MACDs_12_26_9', 'BBL_20_2.0', 'BBU_20_2.0']
+        # Note: Pandas TA column names can vary by version. We check for variations.
+        features = [
+            'RSI', 'SMA_20', 'SMA_50', 
+            'MACD_12_26_9', 'MACDh_12_26_9', 'MACDs_12_26_9', 
+            'BBL_20_2.0', 'BBU_20_2.0',
+            'ADX_14', 'DMP_14', 'DMN_14', # ADX components
+            'ATR', 'Returns', 'RSI_Slope',
+            'Body_Size', 'Upper_Wick', 'Lower_Wick', 'Candle_Color'
+        ]
         
+        # Dynamic Column Mapping for Bollinger Bands
+        # Sometimes they appear as BBL_20_2.0_2.0 or similar
+        if 'BBL_20_2.0' not in df.columns:
+            for col in df.columns:
+                if col.startswith('BBL_20'):
+                    features = [f if f != 'BBL_20_2.0' else col for f in features]
+                if col.startswith('BBU_20'):
+                    features = [f if f != 'BBU_20_2.0' else col for f in features]
+
         # Ensure all features exist
         available_features = [f for f in features if f in df.columns]
         
         missing_features = list(set(features) - set(available_features))
         if missing_features:
-            print(f"Missing indicators: {missing_features}")
-            print(f"Available columns: {df.columns.tolist()}")
+            logger.warning(f"Missing indicators: {missing_features}")
+            # Debug: Print available columns to help identify naming mismatches
+            logger.debug(f"Available columns in DF: {df.columns.tolist()}")
         
         if len(available_features) < len(features):
-            print("Some indicators could not be calculated. Training with available features.")
+            logger.warning("Some indicators could not be calculated. Training with available features.")
         
         X = df[available_features]
         y = df['Target']
         
-        if len(X) < 50:
-            print("Not enough data after dropping NaNs")
+        if len(X) < 100:
+            logger.warning("Not enough data after dropping NaNs")
             return
 
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
         
-        self.model = RandomForestClassifier(n_estimators=100, random_state=42)
+        # More robust model parameters
+        self.model = RandomForestClassifier(
+            n_estimators=200,      # More trees
+            max_depth=10,          # Prevent overfitting
+            min_samples_split=10,  # Require more samples to split
+            min_samples_leaf=5,    # Require more samples in leaves
+            random_state=42
+        )
         self.model.fit(X_train, y_train)
+        
+        # Evaluate accuracy
+        train_score = self.model.score(X_train, y_train)
+        test_score = self.model.score(X_test, y_test)
+        logger.info(f"Model Trained. Train Acc: {train_score:.2f}, Test Acc: {test_score:.2f}")
+        
         self.is_trained = True
         self.feature_columns = available_features # Save features used for training
-        print("Model trained successfully with enhanced indicators.")
 
     def predict_direction(self, current_data):
         """
         Predicts the direction for the next candle.
-        Returns: 1 (Bullish), 0 (Bearish)
+        Returns: 1 (Bullish), -1 (Bearish), 0 (Neutral)
         """
-        if not self.is_trained or current_data is None or len(current_data) < 50:
-            return 0 # Neutral/Bearish default if not ready
+        if not self.is_trained or current_data is None or len(current_data) < 60:
+            return 0 # Default to Neutral if not ready
         
         # Prepare features
         df = self.prepare_features(current_data)
@@ -131,7 +197,7 @@ class StrategyEngine:
         # Check Daily Profit Target
         todays_pnl = self.db.get_todays_pnl()
         if todays_pnl >= config.DAILY_PROFIT_TARGET:
-            print(f"Daily Profit Target Reached: {todays_pnl:.2f} >= {config.DAILY_PROFIT_TARGET}. Stopping trades.")
+            logger.info(f"Daily Profit Target Reached: {todays_pnl:.2f} >= {config.DAILY_PROFIT_TARGET}. Stopping trades.")
             return {"signal": "TARGET_REACHED", "pcr": 0, "ltp": 0, "chain": None}
 
         # Main loop to check conditions and trade
@@ -147,7 +213,7 @@ class StrategyEngine:
         hist_data = self.client.get_historical_data(symbol="NIFTY", interval="5m")
         
         # 3. Train Model if not trained (and we have data)
-        if not self.is_trained and not hist_data.empty and len(hist_data) > 100:
+        if not self.is_trained and not hist_data.empty and len(hist_data) > 200:
             self.train_prediction_model(hist_data)
             
         # 4. Get ML Prediction
@@ -156,40 +222,67 @@ class StrategyEngine:
             prediction = self.predict_direction(hist_data)
             if prediction == 1:
                 ml_signal = "BULLISH"
-            else:
+            elif prediction == -1:
                 ml_signal = "BEARISH"
+            else:
+                ml_signal = "NEUTRAL"
         
         # 5. Get PCR Signal
         analysis = self.analyze_option_chain(chain)
         pcr_signal = analysis['signal']
         
-        # 6. Live Trend Check (Momentum)
-        # Check if current LTP is significantly higher/lower than last closed candle
+        # 6. Live Trend Check (Trend Filter)
+        # Use SMA 50 and SMA 20 to determine the broader trend
+        # This prevents buying on small pullbacks during a downtrend
         live_trend = "NEUTRAL"
+        current_candle_status = "NEUTRAL"
+        
         if not hist_data.empty:
-            last_close = hist_data['close'].iloc[-1]
-            if ltp > last_close * 1.0005: # 0.05% move up
-                live_trend = "BULLISH"
-            elif ltp < last_close * 0.9995: # 0.05% move down
-                live_trend = "BEARISH"
+            last_row = hist_data.iloc[-1]
+            
+            # Current Candle Status (Immediate Price Action)
+            if last_row['close'] > last_row['open']:
+                current_candle_status = "BULLISH (Green)"
+            elif last_row['close'] < last_row['open']:
+                current_candle_status = "BEARISH (Red)"
+            else:
+                current_candle_status = "DOJI (Neutral)"
+
+            # Ensure we have the indicators calculated
+            if 'SMA_50' in last_row and 'SMA_20' in last_row:
+                sma_50 = last_row['SMA_50']
+                sma_20 = last_row['SMA_20']
+                
+                # Trend Definition: Price above SMA 50 AND SMA 20 above SMA 50
+                if ltp > sma_50 and sma_20 > sma_50:
+                    live_trend = "BULLISH"
+                # Trend Definition: Price below SMA 50 AND SMA 20 below SMA 50
+                elif ltp < sma_50 and sma_20 < sma_50:
+                    live_trend = "BEARISH"
+                else:
+                    # Choppy/Sideways market
+                    live_trend = "NEUTRAL"
         
         # 7. Combine Signals (Confluence Strategy)
         # We only trade if signals agree
         final_signal = "NEUTRAL"
         
         # Strong Buy: ML + PCR + Live Trend all agree
-        if pcr_signal == "BULLISH" and ml_signal == "BULLISH":
+        if pcr_signal == "BULLISH" and ml_signal == "BULLISH" and live_trend == "BULLISH":
             final_signal = "BULLISH"
-        # Momentum Buy: ML + Live Trend (ignoring PCR if neutral)
+        # Trend Following Buy: ML + Live Trend (PCR just needs to not be Bearish)
         elif ml_signal == "BULLISH" and live_trend == "BULLISH" and pcr_signal != "BEARISH":
             final_signal = "BULLISH"
             
         # Strong Sell
-        elif pcr_signal == "BEARISH" and ml_signal == "BEARISH":
+        elif pcr_signal == "BEARISH" and ml_signal == "BEARISH" and live_trend == "BEARISH":
             final_signal = "BEARISH"
-        # Momentum Sell
+        # Trend Following Sell
         elif ml_signal == "BEARISH" and live_trend == "BEARISH" and pcr_signal != "BULLISH":
             final_signal = "BEARISH"
+        
+        # Log Analysis Status
+        logger.debug(f"Analysis: ML={ml_signal} | PCR={analysis['pcr']:.2f}({pcr_signal}) | Trend={live_trend} | Final={final_signal}")
         
         analysis['ltp'] = ltp
         analysis['chain'] = chain
@@ -197,6 +290,7 @@ class StrategyEngine:
         analysis['ml_signal'] = ml_signal
         analysis['pcr_signal'] = pcr_signal
         analysis['live_trend'] = live_trend
+        analysis['current_candle'] = current_candle_status
         
         current_signal = final_signal
         
@@ -218,7 +312,7 @@ class StrategyEngine:
                     current_price = row.iloc[0]['ce_ltp'] if opt_type == "CE" else row.iloc[0]['pe_ltp']
                     self.client.update_ltp(pos['symbol'], current_price)
             except Exception as ex:
-                print(f"[Exception] {ex}")
+                logger.error(f"Error updating position prices: {ex}")
 
         # 2. Execute Trades
         # Only trade if signal changes (to avoid spamming orders)
@@ -235,7 +329,7 @@ class StrategyEngine:
                 should_close = True
             
             if should_close:
-                print(f"EXIT SIGNAL: Closing {pos['symbol']}")
+                logger.info(f"EXIT SIGNAL: Closing {pos['symbol']}")
                 
                 # Calculate PnL (Gross)
                 gross_pnl = (pos['current_price'] - pos['buy_price']) * pos['qty']
@@ -274,7 +368,7 @@ class StrategyEngine:
                 order_type = "PE"
             
             if symbol:
-                print(f"ENTRY SIGNAL: {current_signal} -> Buying {symbol}")
+                logger.info(f"ENTRY SIGNAL: {current_signal} -> Buying {symbol}")
                 resp = self.client.place_order(symbol, quantity, "BUY", price)
                 
                 if resp['status'] == 'success':
