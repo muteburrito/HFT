@@ -21,9 +21,16 @@ class Database:
                 quantity INTEGER,
                 price REAL,
                 status TEXT,
-                order_id TEXT
+                order_id TEXT,
+                pnl REAL
             )
         ''')
+        
+        # Migration: Add pnl column if it doesn't exist
+        try:
+            cursor.execute("ALTER TABLE trades ADD COLUMN pnl REAL")
+        except sqlite3.OperationalError:
+            pass # Column likely already exists
 
         # Table for storing daily summary
         cursor.execute('''
@@ -58,8 +65,8 @@ class Database:
     def log_trade(self, trade_data):
         cursor = self.conn.cursor()
         cursor.execute('''
-            INSERT INTO trades (symbol, order_type, transaction_type, quantity, price, status, order_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO trades (symbol, order_type, transaction_type, quantity, price, status, order_id, pnl)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             trade_data.get('symbol'),
             trade_data.get('order_type'),
@@ -67,12 +74,21 @@ class Database:
             trade_data.get('quantity'),
             trade_data.get('price'),
             trade_data.get('status'),
-            trade_data.get('order_id')
+            trade_data.get('order_id'),
+            trade_data.get('pnl')
         ))
         self.conn.commit()
 
     def get_trades(self):
         return pd.read_sql_query("SELECT * FROM trades ORDER BY timestamp DESC", self.conn)
+
+    def get_todays_pnl(self):
+        cursor = self.conn.cursor()
+        # SQLite 'date(timestamp)' extracts the date part. 'now' is UTC. 
+        # If you need local time, you might need 'date(timestamp, "localtime")'
+        cursor.execute("SELECT SUM(pnl) FROM trades WHERE date(timestamp) = date('now')")
+        result = cursor.fetchone()
+        return result[0] if result and result[0] is not None else 0.0
 
     def get_daily_summary(self):
         return pd.read_sql_query("SELECT * FROM daily_summary ORDER BY date DESC", self.conn)

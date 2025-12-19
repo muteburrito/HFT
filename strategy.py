@@ -3,6 +3,7 @@ import pandas_ta as ta
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
+import config
 
 class StrategyEngine:
     def __init__(self, client, db):
@@ -56,6 +57,11 @@ class StrategyEngine:
         
         # Ensure all features exist
         available_features = [f for f in features if f in df.columns]
+        
+        missing_features = list(set(features) - set(available_features))
+        if missing_features:
+            print(f"Missing indicators: {missing_features}")
+            print(f"Available columns: {df.columns.tolist()}")
         
         if len(available_features) < len(features):
             print("Some indicators could not be calculated. Training with available features.")
@@ -122,6 +128,12 @@ class StrategyEngine:
         }
 
     def execute_strategy(self):
+        # Check Daily Profit Target
+        todays_pnl = self.db.get_todays_pnl()
+        if todays_pnl >= config.DAILY_PROFIT_TARGET:
+            print(f"Daily Profit Target Reached: {todays_pnl:.2f} >= {config.DAILY_PROFIT_TARGET}. Stopping trades.")
+            return {"signal": "TARGET_REACHED", "pcr": 0, "ltp": 0, "chain": None}
+
         # Main loop to check conditions and trade
         
         # 1. Fetch Option Chain
@@ -151,66 +163,127 @@ class StrategyEngine:
         analysis = self.analyze_option_chain(chain)
         pcr_signal = analysis['signal']
         
-        # 6. Combine Signals (Confluence Strategy)
-        # We only trade if both ML Model and PCR agree
+        # 6. Live Trend Check (Momentum)
+        # Check if current LTP is significantly higher/lower than last closed candle
+        live_trend = "NEUTRAL"
+        if not hist_data.empty:
+            last_close = hist_data['close'].iloc[-1]
+            if ltp > last_close * 1.0005: # 0.05% move up
+                live_trend = "BULLISH"
+            elif ltp < last_close * 0.9995: # 0.05% move down
+                live_trend = "BEARISH"
+        
+        # 7. Combine Signals (Confluence Strategy)
+        # We only trade if signals agree
         final_signal = "NEUTRAL"
         
+        # Strong Buy: ML + PCR + Live Trend all agree
         if pcr_signal == "BULLISH" and ml_signal == "BULLISH":
             final_signal = "BULLISH"
+        # Momentum Buy: ML + Live Trend (ignoring PCR if neutral)
+        elif ml_signal == "BULLISH" and live_trend == "BULLISH" and pcr_signal != "BEARISH":
+            final_signal = "BULLISH"
+            
+        # Strong Sell
         elif pcr_signal == "BEARISH" and ml_signal == "BEARISH":
             final_signal = "BEARISH"
-        
-        # Fallback: If one is Neutral and other is Strong, maybe take it? 
-        # For safety, we stick to strict confluence for now.
+        # Momentum Sell
+        elif ml_signal == "BEARISH" and live_trend == "BEARISH" and pcr_signal != "BULLISH":
+            final_signal = "BEARISH"
         
         analysis['ltp'] = ltp
         analysis['chain'] = chain
         analysis['signal'] = final_signal # Override with combined signal
         analysis['ml_signal'] = ml_signal
         analysis['pcr_signal'] = pcr_signal
+        analysis['live_trend'] = live_trend
         
         current_signal = final_signal
         
-        # Simple Trade Execution Logic
+        # --- Position Management & Execution ---
+        
+        # 1. Update Prices of Open Positions
+        # We need to find the LTP of our held positions from the current chain
+        open_positions = self.client.get_positions()
+        for pos in open_positions:
+            # Extract strike and type from symbol "NIFTY 25000 CE"
+            try:
+                parts = pos['symbol'].split()
+                strike = float(parts[1])
+                opt_type = parts[2]
+                
+                # Find this contract in the chain
+                row = chain[chain['strike_price'] == strike]
+                if not row.empty:
+                    current_price = row.iloc[0]['ce_ltp'] if opt_type == "CE" else row.iloc[0]['pe_ltp']
+                    self.client.update_ltp(pos['symbol'], current_price)
+            except Exception as ex:
+                print(f"[Exception] {ex}")
+
+        # 2. Execute Trades
         # Only trade if signal changes (to avoid spamming orders)
-        if current_signal != self.last_signal and current_signal != "NEUTRAL":
+        # AND check if we need to close existing positions first
+        
+        quantity = 50 # 1 Lot Nifty
+        
+        # Check for Exit Signals
+        for pos in open_positions:
+            should_close = False
+            if pos['type'] == "CE" and current_signal == "BEARISH":
+                should_close = True
+            elif pos['type'] == "PE" and current_signal == "BULLISH":
+                should_close = True
             
-            # Determine Trade Side
-            side = "BUY" # Options buying strategy
-            quantity = 50 # 1 Lot Nifty
-            
-            # Find ATM Strike
+            if should_close:
+                print(f"EXIT SIGNAL: Closing {pos['symbol']}")
+                
+                # Calculate PnL (Gross)
+                gross_pnl = (pos['current_price'] - pos['buy_price']) * pos['qty']
+                
+                # Calculate Charges for this trade cycle (Buy + Sell)
+                # Note: We are estimating charges here for logging. 
+                # Actual capital deduction happens in client.place_order
+                charges = (config.BROKERAGE_PER_ORDER * 2) * (1 + config.GST_RATE) # Buy + Sell charges
+                net_pnl = gross_pnl - charges
+                
+                self.client.place_order(pos['symbol'], pos['qty'], "SELL", pos['current_price'])
+                self.db.log_trade({
+                    "symbol": pos['symbol'], "order_type": pos['type'], "transaction_type": "SELL",
+                    "quantity": pos['qty'], "price": pos['current_price'], "status": "EXECUTED", "order_id": "exit",
+                    "pnl": net_pnl
+                })
+
+        # Check for Entry Signals (only if no position is open)
+        if len(self.client.get_positions()) == 0 and current_signal != "NEUTRAL":
+             # Find ATM Strike
             chain['diff'] = abs(chain['strike_price'] - ltp)
             atm_row = chain.loc[chain['diff'].idxmin()]
             strike = atm_row['strike_price']
             
+            symbol = ""
+            price = 0
+            order_type = ""
+            
             if current_signal == "BULLISH":
-                # Buy CE
                 symbol = f"NIFTY {strike} CE"
                 price = atm_row['ce_ltp']
                 order_type = "CE"
             elif current_signal == "BEARISH":
-                # Buy PE
                 symbol = f"NIFTY {strike} PE"
                 price = atm_row['pe_ltp']
                 order_type = "PE"
             
-            print(f"SIGNAL DETECTED: {current_signal} -> Placing Order for {symbol}")
-            
-            # Place Order
-            order_response = self.client.place_order(symbol, quantity, side, price)
-            
-            # Log to DB
-            if order_response.get("status") == "success":
-                self.db.log_trade({
-                    "symbol": symbol,
-                    "order_type": order_type,
-                    "transaction_type": side,
-                    "quantity": quantity,
-                    "price": price,
-                    "status": "EXECUTED",
-                    "order_id": order_response.get("order_id")
-                })
-                self.last_signal = current_signal
+            if symbol:
+                print(f"ENTRY SIGNAL: {current_signal} -> Buying {symbol}")
+                resp = self.client.place_order(symbol, quantity, "BUY", price)
+                
+                if resp['status'] == 'success':
+                    self.db.log_trade({
+                        "symbol": symbol, "order_type": order_type, "transaction_type": "BUY",
+                        "quantity": quantity, "price": price, "status": "EXECUTED", "order_id": resp['order_id']
+                    })
+                    self.last_signal = current_signal
+                else:
+                    print(f"Order Failed: {resp.get('message')}")
 
         return analysis

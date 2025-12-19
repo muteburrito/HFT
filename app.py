@@ -1,14 +1,11 @@
 import streamlit as st
 import time
 from datetime import datetime, timedelta, time as dt_time
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 from groww_client import GrowwClient
 from strategy import StrategyEngine
 from database import Database
 import config
 import pandas as pd
-import pandas_ta as ta
 
 # Page Config
 st.set_page_config(
@@ -83,7 +80,17 @@ with st.sidebar.expander("API Credentials"):
         st.success("Credentials Saved! Please click Login.")
 
 st.sidebar.header("Settings")
-capital = st.sidebar.number_input("Capital", value=config.CAPITAL)
+# Display Live Capital from Client instead of static config
+current_capital = st.session_state.client.get_available_balance() if is_logged_in else config.CAPITAL
+st.sidebar.metric("Available Capital", f"₹{current_capital:,.2f}")
+
+# Display Today's PnL
+todays_pnl = st.session_state.db.get_todays_pnl()
+st.sidebar.metric("Today's PnL", f"₹{todays_pnl:,.2f}", delta=f"{todays_pnl:,.2f}")
+
+if todays_pnl >= config.DAILY_PROFIT_TARGET:
+    st.sidebar.warning(f"Target Reached! (Target: ₹{config.DAILY_PROFIT_TARGET})")
+
 target = st.sidebar.number_input("Target Profit", value=config.TARGET_PROFIT)
 auto_refresh = st.sidebar.checkbox("Auto Refresh (1s)")
 
@@ -129,50 +136,6 @@ def render_dashboard():
         with tab1:
             st.subheader("Market Analysis")
             
-            if is_market_open:
-                # Fetch Data for Chart
-                hist_data = st.session_state.client.get_historical_data(symbol="NIFTY", interval="5m")
-                
-                if not hist_data.empty:
-                    # Calculate Indicators for Chart
-                    hist_data['SMA_20'] = ta.sma(hist_data['close'], length=20)
-                    
-                    # Safe BB calculation
-                    bb = ta.bbands(hist_data['close'], length=20)
-                    if bb is not None and not bb.empty:
-                        hist_data = pd.concat([hist_data, bb], axis=1)
-                    
-                    # Create Plotly Chart
-                    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, 
-                                        vertical_spacing=0.03, subplot_titles=('Nifty 50 (5m)', 'Volume'), 
-                                        row_width=[0.2, 0.7])
-
-                    # Candlestick
-                    fig.add_trace(go.Candlestick(x=hist_data.index,
-                                    open=hist_data['open'],
-                                    high=hist_data['high'],
-                                    low=hist_data['low'],
-                                    close=hist_data['close'],
-                                    name='OHLC'), row=1, col=1)
-
-                    # Bollinger Bands & SMA
-                    if 'BBU_20_2.0' in hist_data.columns:
-                        fig.add_trace(go.Scatter(x=hist_data.index, y=hist_data['BBU_20_2.0'], line=dict(color='gray', width=1), name='Upper BB'), row=1, col=1)
-                    if 'BBL_20_2.0' in hist_data.columns:
-                        fig.add_trace(go.Scatter(x=hist_data.index, y=hist_data['BBL_20_2.0'], line=dict(color='gray', width=1), name='Lower BB'), row=1, col=1)
-                        
-                    fig.add_trace(go.Scatter(x=hist_data.index, y=hist_data['SMA_20'], line=dict(color='orange', width=1), name='SMA 20'), row=1, col=1)
-
-                    # Volume
-                    fig.add_trace(go.Bar(x=hist_data.index, y=hist_data['volume'], name='Volume'), row=2, col=1)
-
-                    fig.update_layout(xaxis_rangeslider_visible=False, height=600, margin=dict(l=0, r=0, t=30, b=0))
-                    st.plotly_chart(fig, width="stretch")
-                else:
-                    st.info("Waiting for market data...")
-            else:
-                st.info("Market is currently closed. Charts will be available when the market opens.")
-            
             # Auto-run analysis if refresh is on
             analysis = st.session_state.strategy.execute_strategy()
             ltp = analysis.get('ltp', 0)
@@ -188,9 +151,10 @@ def render_dashboard():
 
             # Detailed Signal Breakdown
             with st.expander("Signal Breakdown", expanded=True):
-                s_col1, s_col2 = st.columns(2)
+                s_col1, s_col2, s_col3 = st.columns(3)
                 s_col1.info(f"ML Model: {analysis.get('ml_signal', 'WAITING')}")
                 s_col2.info(f"Option Chain (PCR): {analysis.get('pcr_signal', 'WAITING')}")
+                s_col3.info(f"Live Trend: {analysis.get('live_trend', 'WAITING')}")
             
             if chain is not None and not chain.empty:
                 # Find ATM Strike
@@ -233,7 +197,22 @@ def render_dashboard():
         with tab3:
             st.subheader("Trade Log")
             trades = st.session_state.db.get_trades()
-            st.dataframe(trades)
+            
+            if not trades.empty:
+                # Style the dataframe
+                def color_pnl(val):
+                    if pd.isna(val):
+                        return ''
+                    color = 'green' if val > 0 else 'red' if val < 0 else 'black'
+                    return f'color: {color}'
+
+                # Ensure pnl column exists (for old data)
+                if 'pnl' not in trades.columns:
+                    trades['pnl'] = None
+
+                st.dataframe(trades.style.map(color_pnl, subset=['pnl']))
+            else:
+                st.info("No trades executed yet.")
 
 # Initial Render
 render_dashboard()

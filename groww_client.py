@@ -4,11 +4,18 @@ import pandas as pd
 from datetime import datetime, timedelta
 import random
 
+import config
+
 class GrowwClient:
     def __init__(self):
         self.api = None
         self.access_token = None
         self.db = None
+        # Mock Account State
+        self.positions = [] # List of dicts: {symbol, qty, buy_price, current_price, type}
+        self.realized_pnl = 0.0
+        self.charges_incurred = 0.0
+        self.capital = config.CAPITAL # Default mock capital
 
     def login(self, db=None):
         try:
@@ -184,61 +191,133 @@ class GrowwClient:
     def place_order(self, symbol, qty, side, price=None):
         # Wrapper for placing order
         print(f"Placing {side} order for {symbol} qty {qty} at {price}")
-        # response = self.api.place_order(...)
-        return {"status": "success", "order_id": "mock_order_123"}
+        
+        # Calculate Charges
+        brokerage = config.BROKERAGE_PER_ORDER
+        gst = brokerage * config.GST_RATE
+        total_charges = brokerage + gst
+        
+        # Mock Execution Logic
+        if side == "BUY":
+            cost = (qty * price) + total_charges
+            if cost > self.capital:
+                return {"status": "failed", "message": "Insufficient Capital"}
+            
+            self.capital -= cost
+            self.charges_incurred += total_charges
+            
+            self.positions.append({
+                "symbol": symbol,
+                "qty": qty,
+                "buy_price": price,
+                "current_price": price,
+                "type": "CE" if "CE" in symbol else "PE"
+            })
+            return {"status": "success", "order_id": f"mock_buy_{random.randint(1000,9999)}"}
+            
+        elif side == "SELL":
+            # Find position to close
+            for i, pos in enumerate(self.positions):
+                if pos["symbol"] == symbol:
+                    # Calculate PnL (Gross)
+                    gross_pnl = (price - pos["buy_price"]) * qty
+                    
+                    # Deduct charges from capital
+                    self.capital -= total_charges
+                    self.charges_incurred += total_charges
+                    
+                    # Add proceeds to capital
+                    self.capital += (qty * price) 
+                    
+                    # Net PnL for this trade (approx for tracking)
+                    # Note: We track realized_pnl as Gross PnL usually, but let's track Net here for simplicity
+                    self.realized_pnl += (gross_pnl - total_charges) # Subtracting sell charges from PnL
+                    # Note: Buy charges were already deducted from capital, but not from realized_pnl yet if we want "Net PnL"
+                    # To be accurate: Net PnL = Gross PnL - Buy Charges - Sell Charges
+                    # We deducted Buy Charges from Capital earlier.
+                    # Let's adjust realized_pnl to reflect the Buy Charges too for this closed trade.
+                    self.realized_pnl -= total_charges # Deducting the Buy charges retrospectively from PnL metric
+                    
+                    # Remove position (assuming full exit for simplicity)
+                    self.positions.pop(i)
+                    return {"status": "success", "order_id": f"mock_sell_{random.randint(1000,9999)}"}
+            
+            return {"status": "failed", "message": "Position not found"}
+
+        return {"status": "failed", "message": "Invalid Side"}
 
     def get_positions(self):
         # Fetch current positions
-        return []
+        return self.positions
+        
+    def get_available_balance(self):
+        return round(self.capital, 2)
+
+    def update_ltp(self, symbol, ltp):
+        """Updates the current price of a held position for PnL calculation"""
+        for pos in self.positions:
+            if pos["symbol"] == symbol:
+                pos["current_price"] = ltp
 
     def get_pnl(self):
-        # Calculate current PnL
-        return 0.0
+        # Calculate current PnL (Realized + Unrealized)
+        unrealized_pnl = 0.0
+        for pos in self.positions:
+            unrealized_pnl += (pos["current_price"] - pos["buy_price"]) * pos["qty"]
+            
+        return round(self.realized_pnl + unrealized_pnl, 2)
 
     def get_historical_data(self, symbol="NIFTY", interval="5m"):
         """
         Fetches historical data. 
-        For now, generates mock 5-minute candle data for the current day.
+        Generates mock 5-minute candle data for the last 5 days to ensure enough data for ML.
         """
         # In a real scenario, you would call self.api.get_historical_data(...)
         
-        # Generate Mock Data
-        end_time = datetime.now()
-        start_time = end_time.replace(hour=9, minute=15, second=0, microsecond=0)
-        
-        if end_time < start_time:
-            # If before market open, show yesterday's data or empty
-            start_time = start_time - timedelta(days=1)
-            end_time = start_time.replace(hour=15, minute=30)
-
-        timestamps = []
-        current = start_time
-        while current <= end_time and current.hour < 16: # Stop if goes beyond market hours
-             if current.hour > 15 or (current.hour == 15 and current.minute > 30):
-                 break
-             timestamps.append(current)
-             current += timedelta(minutes=5)
-
+        # Generate Mock Data for last 5 days
         data = []
         price = 25800.0 # Starting price
         
-        for ts in timestamps:
-            open_p = price + random.uniform(-20, 20)
-            high_p = open_p + random.uniform(0, 30)
-            low_p = open_p - random.uniform(0, 30)
-            close_p = random.uniform(low_p, high_p)
-            volume = random.randint(1000, 50000)
+        end_time = datetime.now()
+        # Start 5 days ago
+        start_date = end_time.date() - timedelta(days=5)
+        
+        current_date = start_date
+        while current_date <= end_time.date():
+            # Skip weekends
+            if current_date.weekday() >= 5:
+                current_date += timedelta(days=1)
+                continue
+                
+            # Market hours 9:15 to 15:30
+            day_start = datetime.combine(current_date, datetime.strptime("09:15", "%H:%M").time())
+            day_end = datetime.combine(current_date, datetime.strptime("15:30", "%H:%M").time())
             
-            data.append({
-                "datetime": ts,
-                "open": open_p,
-                "high": high_p,
-                "low": low_p,
-                "close": close_p,
-                "volume": volume
-            })
+            # If today, stop at current time
+            if current_date == end_time.date():
+                day_end = min(day_end, end_time)
             
-            price = close_p # Next candle starts around previous close
+            current_ts = day_start
+            while current_ts <= day_end:
+                open_p = price + random.uniform(-20, 20)
+                high_p = open_p + random.uniform(0, 30)
+                low_p = open_p - random.uniform(0, 30)
+                close_p = random.uniform(low_p, high_p)
+                volume = random.randint(1000, 50000)
+                
+                data.append({
+                    "datetime": current_ts,
+                    "open": open_p,
+                    "high": high_p,
+                    "low": low_p,
+                    "close": close_p,
+                    "volume": volume
+                })
+                
+                price = close_p # Next candle starts around previous close
+                current_ts += timedelta(minutes=5)
+                
+            current_date += timedelta(days=1)
 
         df = pd.DataFrame(data)
         if not df.empty:
