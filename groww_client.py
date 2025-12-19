@@ -194,3 +194,53 @@ class GrowwClient:
     def get_pnl(self):
         # Calculate current PnL
         return 0.0
+
+    def get_historical_data(self, symbol="NIFTY", interval="5m"):
+        """
+        Fetches historical data. 
+        For now, generates mock 5-minute candle data for the current day.
+        """
+        # In a real scenario, you would call self.api.get_historical_data(...)
+        
+        # Generate Mock Data
+        end_time = datetime.now()
+        start_time = end_time.replace(hour=9, minute=15, second=0, microsecond=0)
+        
+        if end_time < start_time:
+            # If before market open, show yesterday's data or empty
+            start_time = start_time - timedelta(days=1)
+            end_time = start_time.replace(hour=15, minute=30)
+
+        timestamps = []
+        current = start_time
+        while current <= end_time and current.hour < 16: # Stop if goes beyond market hours
+             if current.hour > 15 or (current.hour == 15 and current.minute > 30):
+                 break
+             timestamps.append(current)
+             current += timedelta(minutes=5)
+
+        data = []
+        price = 25800.0 # Starting price
+        
+        for ts in timestamps:
+            open_p = price + random.uniform(-20, 20)
+            high_p = open_p + random.uniform(0, 30)
+            low_p = open_p - random.uniform(0, 30)
+            close_p = random.uniform(low_p, high_p)
+            volume = random.randint(1000, 50000)
+            
+            data.append({
+                "datetime": ts,
+                "open": open_p,
+                "high": high_p,
+                "low": low_p,
+                "close": close_p,
+                "volume": volume
+            })
+            
+            price = close_p # Next candle starts around previous close
+
+        df = pd.DataFrame(data)
+        if not df.empty:
+            df.set_index("datetime", inplace=True)
+        return df
