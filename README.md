@@ -1,5 +1,12 @@
 # Nifty 50 Option Chain Algo Trader
 
+<div align="center">
+
+[![Build and Release](https://github.com/muteburrito/HFT/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/muteburrito/HFT/actions/workflows/ci-cd.yml)
+[![GitHub release (latest by date)](https://img.shields.io/github/v/release/muteburrito/HFT)](https://github.com/muteburrito/HFT/releases/latest)
+
+</div>
+
 This is a sophisticated algorithmic trading application for Nifty 50 options, powered by the Groww API. It combines Machine Learning, Technical Analysis, and Option Chain sentiment to make high-probability trading decisions.
 
 ## 🚀 Key Features
