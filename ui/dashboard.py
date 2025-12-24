@@ -15,13 +15,25 @@ def render(analysis):
     with col_c:
         st.metric("PCR", f"{analysis.get('pcr', 0):.2f}")
 
+    # Market Regime Banner
+    regime = analysis.get('market_regime', 'UNKNOWN')
+    if regime == "TRENDING":
+        st.success(f"📈 Market Regime: {regime} (Using SMA Trend Following)")
+    elif regime == "CHOPPY/VOLATILE":
+        st.warning(f"⚡ Market Regime: {regime} (Using Supertrend Scalping)")
+    elif regime == "DEAD/FLAT":
+        st.error(f"🛑 Market Regime: {regime} (Trading Paused)")
+    else:
+        st.info(f"Market Regime: {regime}")
+
     # Detailed Signal Breakdown
     with st.expander("Signal Breakdown", expanded=True):
-        s_col1, s_col2, s_col3, s_col4 = st.columns(4)
+        s_col1, s_col2, s_col3, s_col4, s_col5 = st.columns(5)
         s_col1.info(f"ML Model: {analysis.get('ml_signal', 'WAITING')}")
         s_col2.info(f"Option Chain (PCR): {analysis.get('pcr_signal', 'WAITING')}")
         s_col3.info(f"Major Trend (SMA): {analysis.get('live_trend', 'WAITING')}")
-        s_col4.info(f"Current Candle: {analysis.get('current_candle', 'WAITING')}")
+        s_col4.info(f"Supertrend: {analysis.get('supertrend', 'WAITING')}")
+        s_col5.info(f"Current Candle: {analysis.get('current_candle', 'WAITING')}")
     
     if chain is not None and not chain.empty:
         # Find ATM Strike

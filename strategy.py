@@ -50,6 +50,15 @@ class StrategyEngine:
         df['SMA_20'] = ta.sma(df['close'], length=20)
         df['SMA_50'] = ta.sma(df['close'], length=50)
         
+        # Supertrend (Faster Trend Indicator)
+        # Returns 3 columns: SUPERT_7_3.0, SUPERTd_7_3.0, SUPERTl_7_3.0
+        st_data = ta.supertrend(df['high'], df['low'], df['close'], length=7, multiplier=3)
+        if st_data is not None:
+            df = pd.concat([df, st_data], axis=1)
+            # Rename for easier access (pandas_ta names can be verbose)
+            # We look for the column that starts with SUPERT_ (the value) and SUPERTd_ (the direction)
+            # Direction: 1 is Bullish, -1 is Bearish
+            
         # Momentum / Returns
         df['Returns'] = df['close'].pct_change()
         df['RSI_Slope'] = df['RSI'].diff()
@@ -236,9 +245,14 @@ class StrategyEngine:
         # This prevents buying on small pullbacks during a downtrend
         live_trend = "NEUTRAL"
         current_candle_status = "NEUTRAL"
+        market_regime = "UNKNOWN"
+        st_direction = 0
         
         if not hist_data.empty:
-            last_row = hist_data.iloc[-1]
+            # CRITICAL: Calculate indicators for the latest data if not already present
+            # The hist_data from client is raw OHLCV. We need to add indicators.
+            hist_data_with_indicators = self.prepare_features(hist_data)
+            last_row = hist_data_with_indicators.iloc[-1]
             
             # Current Candle Status (Immediate Price Action)
             if last_row['close'] > last_row['open']:
@@ -248,20 +262,66 @@ class StrategyEngine:
             else:
                 current_candle_status = "DOJI (Neutral)"
 
+            # --- Market Regime Detection ---
+            # ADX_14 is the standard column name from pandas_ta
+            adx = last_row.get('ADX_14', 0)
+            
+            if adx < 15:
+                market_regime = "DEAD/FLAT"
+            elif adx < 25:
+                market_regime = "CHOPPY/VOLATILE"
+            else:
+                market_regime = "TRENDING"
+                
+            logger.info(f"Market Regime: {market_regime} (ADX: {adx:.2f})")
+
             # Ensure we have the indicators calculated
             if 'SMA_50' in last_row and 'SMA_20' in last_row:
                 sma_50 = last_row['SMA_50']
                 sma_20 = last_row['SMA_20']
                 
-                # Trend Definition: Price above SMA 50 AND SMA 20 above SMA 50
-                if ltp > sma_50 and sma_20 > sma_50:
-                    live_trend = "BULLISH"
-                # Trend Definition: Price below SMA 50 AND SMA 20 below SMA 50
-                elif ltp < sma_50 and sma_20 < sma_50:
-                    live_trend = "BEARISH"
-                else:
-                    # Choppy/Sideways market
+                # Check for Supertrend Direction if available
+                st_dir_col = [c for c in hist_data_with_indicators.columns if c.startswith('SUPERTd_')][0] if any(c.startswith('SUPERTd_') for c in hist_data_with_indicators.columns) else None
+                st_val_col = [c for c in hist_data_with_indicators.columns if c.startswith('SUPERT_') and not c.startswith('SUPERTd')][0] if any(c.startswith('SUPERT_') and not c.startswith('SUPERTd') for c in hist_data_with_indicators.columns) else None
+                
+                st_direction = last_row[st_dir_col] if st_dir_col else 0
+                st_value = last_row[st_val_col] if st_val_col else 0
+                
+                # LIVE ADJUSTMENT: Check if current LTP breaks the Supertrend level
+                # This fixes the "Lag" where the candle hasn't closed yet but price has crossed.
+                if st_direction == 1 and ltp < st_value:
+                    # logger.info(f"Live Supertrend Break detected! Price {ltp} < ST {st_value}. Flipping to BEARISH.")
+                    st_direction = -1
+                elif st_direction == -1 and ltp > st_value:
+                    # logger.info(f"Live Supertrend Break detected! Price {ltp} > ST {st_value}. Flipping to BULLISH.")
+                    st_direction = 1
+                
+                # --- Dynamic Trend Logic based on Regime ---
+                
+                if market_regime == "DEAD/FLAT":
+                    # Market is dead. Force Neutral to avoid whipsaws.
                     live_trend = "NEUTRAL"
+                    
+                elif market_regime == "TRENDING":
+                    # Strong Trend: Trust the Moving Averages (SMA 50/20)
+                    # They are slower but filter out noise in a strong trend.
+                    # FIX: Added ltp > sma_20 check to avoid calling a pullback "Bullish"
+                    if ltp > sma_50 and sma_20 > sma_50 and ltp > sma_20:
+                        live_trend = "BULLISH"
+                    elif ltp < sma_50 and sma_20 < sma_50 and ltp < sma_20:
+                        live_trend = "BEARISH"
+                    else:
+                        live_trend = "NEUTRAL"
+                        
+                else: # CHOPPY/VOLATILE (15 <= ADX < 25)
+                    # Volatile Market: Trust Supertrend (Faster)
+                    # SMA is too slow here.
+                    if st_direction == 1:
+                        live_trend = "BULLISH"
+                    elif st_direction == -1:
+                        live_trend = "BEARISH"
+                    else:
+                        live_trend = "NEUTRAL"
         
         # 7. Combine Signals (Confluence Strategy)
         # We only trade if signals agree
@@ -273,12 +333,18 @@ class StrategyEngine:
         # Trend Following Buy: ML + Live Trend (PCR just needs to not be Bearish)
         elif ml_signal == "BULLISH" and live_trend == "BULLISH" and pcr_signal != "BEARISH":
             final_signal = "BULLISH"
+        # Scalping Buy: ML is Bullish + Current Candle is Green (Ignore Trend/PCR if strong momentum)
+        elif ml_signal == "BULLISH" and current_candle_status == "BULLISH (Green)" and pcr_signal != "BEARISH":
+             final_signal = "BULLISH"
             
         # Strong Sell
         elif pcr_signal == "BEARISH" and ml_signal == "BEARISH" and live_trend == "BEARISH":
             final_signal = "BEARISH"
         # Trend Following Sell
         elif ml_signal == "BEARISH" and live_trend == "BEARISH" and pcr_signal != "BULLISH":
+            final_signal = "BEARISH"
+        # Scalping Sell: ML is Bearish + Current Candle is Red
+        elif ml_signal == "BEARISH" and current_candle_status == "BEARISH (Red)" and pcr_signal != "BULLISH":
             final_signal = "BEARISH"
         
         # Log Analysis Status
@@ -291,6 +357,8 @@ class StrategyEngine:
         analysis['pcr_signal'] = pcr_signal
         analysis['live_trend'] = live_trend
         analysis['current_candle'] = current_candle_status
+        analysis['market_regime'] = market_regime
+        analysis['supertrend'] = "BULLISH" if st_direction == 1 else "BEARISH" if st_direction == -1 else "NEUTRAL"
         
         current_signal = final_signal
         
