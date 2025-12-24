@@ -86,6 +86,37 @@ jobs:
           --hidden-import sklearn \
           main.py
           
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.artifact_name }}
+        path: dist/${{ matrix.exe_name }}
+
+  test:
+    needs: build
+    name: Test on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+        - os: ubuntu-latest
+          artifact_name: HFT_Algo_Trader_Linux
+          exe_name: HFT_Algo_Trader
+        - os: windows-latest
+          artifact_name: HFT_Algo_Trader_Windows
+          exe_name: HFT_Algo_Trader.exe
+        - os: macos-latest
+          artifact_name: HFT_Algo_Trader_MacOS
+          exe_name: HFT_Algo_Trader
+
+    steps:
+    - name: Download Artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: ${{ matrix.artifact_name }}
+        path: dist
+
     - name: Test Executable (Unix)
       if: runner.os != 'Windows'
       shell: bash
@@ -116,14 +147,8 @@ jobs:
             Write-Host "Application started successfully."
         }
 
-    - name: Upload Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: ${{ matrix.artifact_name }}
-        path: dist/${{ matrix.exe_name }}
-
   release:
-    needs: build
+    needs: test
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     permissions:
