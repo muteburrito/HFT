@@ -127,12 +127,18 @@ jobs:
         STREAMLIT_BROWSER_GATHER_USAGE_STATS: false
         STREAMLIT_SERVER_HEADLESS: true
       run: |
+        chmod +x dist/${{ matrix.exe_name }}
+        
+        # 1. Run Import Check
+        echo "Running Import Check..."
+        ./dist/${{ matrix.exe_name }} --check-imports
+        
+        # 2. Run Startup Smoke Test
         # Create dummy credentials to suppress email prompt
         mkdir -p ~/.streamlit
         echo '[general]' > ~/.streamlit/credentials.toml
         echo 'email = ""' >> ~/.streamlit/credentials.toml
         
-        chmod +x dist/${{ matrix.exe_name }}
         ./dist/${{ matrix.exe_name }} &
         PID=$!
         sleep 15
@@ -151,6 +157,15 @@ jobs:
         STREAMLIT_BROWSER_GATHER_USAGE_STATS: false
         STREAMLIT_SERVER_HEADLESS: true
       run: |
+        # 1. Run Import Check
+        Write-Host "Running Import Check..."
+        & "dist\${{ matrix.exe_name }}" --check-imports
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error "Import check failed!"
+            exit 1
+        }
+
+        # 2. Run Startup Smoke Test
         # Create dummy credentials to suppress email prompt
         New-Item -Path $env:USERPROFILE\.streamlit -ItemType Directory -Force
         Set-Content -Path $env:USERPROFILE\.streamlit\credentials.toml -Value "[general]`nemail = """""
