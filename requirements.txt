@@ -7,3 +7,4 @@ scikit-learn
 pandas-ta
 matplotlib
 plotly
+pyinstaller
