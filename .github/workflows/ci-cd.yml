@@ -72,6 +72,14 @@ jobs:
       run: |
         pyinstaller --onefile --name HFT_Algo_Trader --clean \
           --collect-all streamlit \
+          --collect-all sklearn \
+          --collect-all pandas \
+          --collect-all numpy \
+          --collect-all pandas_ta \
+          --collect-all growwapi \
+          --collect-all matplotlib \
+          --collect-all plotly \
+          --hidden-import pyotp \
           --add-data "app.py${{ matrix.path_sep }}." \
           --add-data "config.py${{ matrix.path_sep }}." \
           --add-data "database.py${{ matrix.path_sep }}." \
@@ -79,15 +87,6 @@ jobs:
           --add-data "logger.py${{ matrix.path_sep }}." \
           --add-data "strategy.py${{ matrix.path_sep }}." \
           --add-data "ui${{ matrix.path_sep }}ui" \
-          --hidden-import streamlit \
-          --hidden-import pandas \
-          --hidden-import numpy \
-          --hidden-import pandas_ta \
-          --hidden-import sklearn \
-          --hidden-import growwapi \
-          --hidden-import pyotp \
-          --hidden-import matplotlib \
-          --hidden-import plotly \
           main.py
           
     - name: Upload Artifact
