@@ -1,0 +1,126 @@
+name: Build and Release
+
+on:
+  push:
+    branches: [ "master" ]
+    tags: [ "v*" ]
+  pull_request:
+    branches: [ "master" ]
+
+jobs:
+  lint:
+    name: Lint Code
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.10"
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install flake8
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+        
+    - name: Lint with flake8
+      run: |
+        # stop the build if there are Python syntax errors or undefined names
+        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+        # exit-zero treats all errors as warnings.
+        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+
+  build:
+    needs: lint
+    name: Build on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+        - os: ubuntu-latest
+          path_sep: ':'
+          artifact_name: HFT_Algo_Trader_Linux
+          exe_name: HFT_Algo_Trader
+        - os: windows-latest
+          path_sep: ';'
+          artifact_name: HFT_Algo_Trader_Windows
+          exe_name: HFT_Algo_Trader.exe
+        - os: macos-latest
+          path_sep: ':'
+          artifact_name: HFT_Algo_Trader_MacOS
+          exe_name: HFT_Algo_Trader
+
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.10"
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pyinstaller
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+        
+    - name: Build with PyInstaller
+      run: |
+        pyinstaller --onefile --name HFT_Algo_Trader --clean \
+          --add-data "app.py${{ matrix.path_sep }}." \
+          --add-data "config.py${{ matrix.path_sep }}." \
+          --add-data "database.py${{ matrix.path_sep }}." \
+          --add-data "groww_client.py${{ matrix.path_sep }}." \
+          --add-data "logger.py${{ matrix.path_sep }}." \
+          --add-data "strategy.py${{ matrix.path_sep }}." \
+          --add-data "ui${{ matrix.path_sep }}ui" \
+          --hidden-import streamlit \
+          --hidden-import pandas \
+          --hidden-import numpy \
+          --hidden-import pandas_ta \
+          --hidden-import sklearn \
+          main.py
+          
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.artifact_name }}
+        path: dist/${{ matrix.exe_name }}
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+    - name: Download Linux Artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: HFT_Algo_Trader_Linux
+        path: ./release_assets/linux
+        
+    - name: Download Windows Artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: HFT_Algo_Trader_Windows
+        path: ./release_assets/windows
+        
+    - name: Download MacOS Artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: HFT_Algo_Trader_MacOS
+        path: ./release_assets/macos
+        
+    - name: Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          ./release_assets/linux/HFT_Algo_Trader
+          ./release_assets/windows/HFT_Algo_Trader.exe
+          ./release_assets/macos/HFT_Algo_Trader
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
