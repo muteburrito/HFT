@@ -14,6 +14,9 @@ def main():
 
     app_path = os.path.join(application_path, "app.py")
 
+    # Suppress Streamlit email prompt and usage stats
+    os.environ["STREAMLIT_BROWSER_GATHER_USAGE_STATS"] = "false"
+
     sys.argv = [
         "streamlit", 
         "run", 
