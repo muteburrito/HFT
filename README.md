@@ -3,7 +3,7 @@
 <div align="center">
 
 [![Build and Release](https://github.com/muteburrito/HFT/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/muteburrito/HFT/actions/workflows/ci-cd.yml)
-[![GitHub release (latest by date)](https://img.shields.io/github/v/release/muteburrito/HFT)](https://github.com/muteburrito/HFT/releases/latest)
+[![GitHub release (latest by date including pre-releases)](https://img.shields.io/github/v/release/muteburrito/HFT?include_prereleases)](https://github.com/muteburrito/HFT/releases)
 
 </div>
 
