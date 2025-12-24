@@ -122,11 +122,17 @@ jobs:
       shell: bash
       env:
         STREAMLIT_BROWSER_GATHER_USAGE_STATS: false
+        STREAMLIT_SERVER_HEADLESS: true
       run: |
+        # Create dummy credentials to suppress email prompt
+        mkdir -p ~/.streamlit
+        echo '[general]' > ~/.streamlit/credentials.toml
+        echo 'email = ""' >> ~/.streamlit/credentials.toml
+        
         chmod +x dist/${{ matrix.exe_name }}
         ./dist/${{ matrix.exe_name }} &
         PID=$!
-        sleep 10
+        sleep 15
         if ps -p $PID > /dev/null; then
            echo "Application started successfully."
            kill $PID
@@ -140,9 +146,14 @@ jobs:
       shell: pwsh
       env:
         STREAMLIT_BROWSER_GATHER_USAGE_STATS: false
+        STREAMLIT_SERVER_HEADLESS: true
       run: |
+        # Create dummy credentials to suppress email prompt
+        New-Item -Path $env:USERPROFILE\.streamlit -ItemType Directory -Force
+        Set-Content -Path $env:USERPROFILE\.streamlit\credentials.toml -Value "[general]`nemail = """""
+
         $proc = Start-Process -FilePath "dist\${{ matrix.exe_name }}" -PassThru -NoNewWindow
-        Start-Sleep -Seconds 10
+        Start-Sleep -Seconds 15
         if ($proc.HasExited) {
             Write-Error "Application crashed with exit code $($proc.ExitCode)!"
             exit 1
