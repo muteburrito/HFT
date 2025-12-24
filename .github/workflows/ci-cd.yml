@@ -71,7 +71,7 @@ jobs:
       shell: bash
       run: |
         pyinstaller --onefile --name HFT_Algo_Trader --clean \
-          --copy-metadata streamlit \
+          --collect-all streamlit \
           --add-data "app.py${{ matrix.path_sep }}." \
           --add-data "config.py${{ matrix.path_sep }}." \
           --add-data "database.py${{ matrix.path_sep }}." \
