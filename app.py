@@ -8,6 +8,8 @@ import config
 from ui import dashboard, option_chain, trades, strategy_explanation
 from logger import setup_logger
 
+import os
+
 logger = setup_logger(__name__)
 
 # Page Config
@@ -16,6 +18,17 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# Hide UI elements if running as executable
+if os.environ.get("IS_FROZEN"):
+    st.markdown("""
+        <style>
+        #MainMenu {visibility: hidden;}
+        header {visibility: hidden;}
+        footer {visibility: hidden;}
+        [data-testid="stToolbar"] {visibility: hidden;}
+        </style>
+    """, unsafe_allow_html=True)
 
 # --- Helper Functions ---
 def check_market_status():

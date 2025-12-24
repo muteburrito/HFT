@@ -8,12 +8,21 @@ def main():
         # extends the sys module by a flag frozen=True and sets the app 
         # path into variable _MEIPASS'.
         application_path = sys._MEIPASS
+        os.environ["IS_FROZEN"] = "true"
     else:
         application_path = os.path.dirname(os.path.abspath(__file__))
 
     app_path = os.path.join(application_path, "app.py")
 
-    sys.argv = ["streamlit", "run", app_path, "--global.developmentMode=false"]
+    sys.argv = [
+        "streamlit", 
+        "run", 
+        app_path, 
+        "--global.developmentMode=false",
+        "--client.showErrorDetails=false",
+        "--client.toolbarMode=viewer",
+        "--browser.gatherUsageStats=false"
+    ]
     sys.exit(stcli.main())
 
 if __name__ == "__main__":

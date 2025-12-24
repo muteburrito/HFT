@@ -266,14 +266,19 @@ class StrategyEngine:
             # ADX_14 is the standard column name from pandas_ta
             adx = last_row.get('ADX_14', 0)
             
-            if adx < 15:
+            # Check for Momentum (Large Candle Body relative to ATR) to catch sudden moves
+            body_size = last_row.get('Body_Size', 0)
+            atr = last_row.get('ATR', 0)
+            is_high_momentum = body_size > (atr * 1.0) if atr > 0 else False # If body is larger than ATR, it's a strong move
+            
+            if adx < 20 and not is_high_momentum:
                 market_regime = "DEAD/FLAT"
-            elif adx < 25:
+            elif adx < 25 and not is_high_momentum:
                 market_regime = "CHOPPY/VOLATILE"
             else:
                 market_regime = "TRENDING"
                 
-            logger.info(f"Market Regime: {market_regime} (ADX: {adx:.2f})")
+            logger.info(f"Market Regime: {market_regime} (ADX: {adx:.2f}, Momentum: {is_high_momentum})")
 
             # Ensure we have the indicators calculated
             if 'SMA_50' in last_row and 'SMA_20' in last_row:
@@ -300,7 +305,14 @@ class StrategyEngine:
                 
                 if market_regime == "DEAD/FLAT":
                     # Market is dead. Force Neutral to avoid whipsaws.
-                    live_trend = "NEUTRAL"
+                    # EXCEPTION: If we have high momentum, trust the Supertrend/Price Action
+                    if is_high_momentum:
+                        if st_direction == 1:
+                            live_trend = "BULLISH"
+                        elif st_direction == -1:
+                            live_trend = "BEARISH"
+                    else:
+                        live_trend = "NEUTRAL"
                     
                 elif market_regime == "TRENDING":
                     # Strong Trend: Trust the Moving Averages (SMA 50/20)

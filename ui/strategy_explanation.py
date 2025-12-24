@@ -9,18 +9,23 @@ def render():
 
     st.divider()
 
-    st.subheader("1. The Trend Filter (The Conservative Expert)")
+    st.subheader("1. The Trend Filter (The Context Expert)")
     st.markdown("""
-    **Goal:** Ensure we are trading *with* the market, not against it.
+    **Goal:** Identify the current "Market Regime" to choose the right tool for the job.
     
-    *   **Logic:** We use two Moving Averages (SMA).
-        *   **SMA 50 (Long Term):** The "Heavy" line.
-        *   **SMA 20 (Short Term):** The "Fast" line.
-    *   **Bullish Signal:** The Fast line (20) is *above* the Heavy line (50), AND the Price is above both.
-    *   **Bearish Signal:** The Fast line (20) is *below* the Heavy line (50), AND the Price is below both.
-    *   **Neutral:** If the lines are tangled or the price is stuck between them.
-    
-    *Why is this important?* It prevents the bot from buying during a crash or selling during a rally.
+    *   **Step A: Identify Regime (ADX & Momentum)**
+        *   **DEAD/FLAT:** ADX < 20 and Low Momentum. *Action: Stay out (unless a sudden explosion occurs).*
+        *   **CHOPPY/VOLATILE:** ADX between 20-25. *Action: Use faster indicators.*
+        *   **TRENDING:** ADX > 25. *Action: Use reliable trend followers.*
+        
+    *   **Step B: Determine Direction**
+        *   **In Trending Markets:** We use **SMA 50 & SMA 20**.
+            *   *Bullish:* Price > SMA 20 > SMA 50.
+            *   *Bearish:* Price < SMA 20 < SMA 50.
+        *   **In Volatile/Fast Markets:** We use **Supertrend (7, 3)**.
+            *   *Bullish:* Price is above the Supertrend line.
+            *   *Bearish:* Price is below the Supertrend line.
+            *   *Note:* If a sudden high-momentum move happens in a Flat market, we trust the Supertrend/Price Action to catch the breakout.
     """)
 
     st.divider()
@@ -31,9 +36,10 @@ def render():
     
     *   **Logic:** We use a **Random Forest Classifier** (AI). It studies the last 200 candles to learn patterns.
     *   **What it sees:**
-        *   **Momentum:** RSI (Is it overbought?), MACD (Is momentum shifting?).
-        *   **Volatility:** ATR (How big are the candles?).
-        *   **Price Action:** **Candle Color** (Green/Red), **Wicks** (Rejection), and Body Size.
+        *   **Momentum:** RSI, MACD, RSI Slope.
+        *   **Volatility:** ATR, Bollinger Bands.
+        *   **Price Action:** **Candle Color**, **Wicks**, and **Body Size**.
+        *   **Trend:** SMA 20/50, Supertrend.
     *   **The Output:**
         *   🟢 **BULLISH:** "I see a pattern that usually leads to a pump."
         *   🔴 **BEARISH:** "I see a pattern that usually leads to a dump."
@@ -53,10 +59,19 @@ def render():
 
     st.divider()
 
-    st.subheader("4. The Final Decision")
+    st.subheader("4. The Final Decision (Execution Logic)")
     st.info("""
-    The bot only takes a trade if **ALL** experts agree (or at least the Trend and ML agree strongly).
+    The bot executes a trade based on the strength of the confluence:
     
-    *   **BUY Call:** Trend is UP + ML says UP + PCR is > 1.
-    *   **BUY Put:** Trend is DOWN + ML says DOWN + PCR is < 1.
+    1.  **Strong Trade (High Confidence):**
+        *   ✅ ML Model + ✅ Trend Filter + ✅ PCR Sentiment **ALL AGREE**.
+        
+    2.  **Trend Following Trade:**
+        *   ✅ ML Model + ✅ Trend Filter agree.
+        *   ⚠️ PCR is Neutral (or at least not opposing).
+        
+    3.  **Scalping Trade (Fast Moves):**
+        *   ✅ ML Model is Strong.
+        *   ✅ Current Candle Color confirms direction.
+        *   ⚠️ Used when momentum is too fast for trend indicators to catch up.
     """)
