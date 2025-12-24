@@ -1,5 +1,10 @@
 import sys
 import os
+
+# Set environment variables BEFORE importing streamlit to ensure they are picked up
+# This prevents the "Welcome to Streamlit" email prompt on first run
+os.environ["STREAMLIT_BROWSER_GATHER_USAGE_STATS"] = "false"
+
 from streamlit.web import cli as stcli
 
 def main():
@@ -13,9 +18,6 @@ def main():
         application_path = os.path.dirname(os.path.abspath(__file__))
 
     app_path = os.path.join(application_path, "app.py")
-
-    # Suppress Streamlit email prompt and usage stats
-    os.environ["STREAMLIT_BROWSER_GATHER_USAGE_STATS"] = "false"
 
     sys.argv = [
         "streamlit", 
