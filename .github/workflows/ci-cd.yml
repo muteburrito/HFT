@@ -84,6 +84,10 @@ jobs:
           --hidden-import numpy \
           --hidden-import pandas_ta \
           --hidden-import sklearn \
+          --hidden-import growwapi \
+          --hidden-import pyotp \
+          --hidden-import matplotlib \
+          --hidden-import plotly \
           main.py
           
     - name: Upload Artifact
