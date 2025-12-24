@@ -120,6 +120,8 @@ jobs:
     - name: Test Executable (Unix)
       if: runner.os != 'Windows'
       shell: bash
+      env:
+        STREAMLIT_BROWSER_GATHER_USAGE_STATS: false
       run: |
         chmod +x dist/${{ matrix.exe_name }}
         ./dist/${{ matrix.exe_name }} &
@@ -136,6 +138,8 @@ jobs:
     - name: Test Executable (Windows)
       if: runner.os == 'Windows'
       shell: pwsh
+      env:
+        STREAMLIT_BROWSER_GATHER_USAGE_STATS: false
       run: |
         $proc = Start-Process -FilePath "dist\${{ matrix.exe_name }}" -PassThru -NoNewWindow
         Start-Sleep -Seconds 10
