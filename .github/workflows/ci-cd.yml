@@ -205,12 +205,18 @@ jobs:
         name: HFT_Algo_Trader_MacOS
         path: ./release_assets/macos
         
+    - name: Rename Assets
+      run: |
+        mv ./release_assets/linux/HFT_Algo_Trader ./release_assets/linux/HFT_Algo_Trader_Linux
+        mv ./release_assets/macos/HFT_Algo_Trader ./release_assets/macos/HFT_Algo_Trader_MacOS
+        mv ./release_assets/windows/HFT_Algo_Trader.exe ./release_assets/windows/HFT_Algo_Trader_Windows.exe
+
     - name: Release
       uses: softprops/action-gh-release@v1
       with:
         files: |
-          ./release_assets/linux/HFT_Algo_Trader
-          ./release_assets/windows/HFT_Algo_Trader.exe
-          ./release_assets/macos/HFT_Algo_Trader
+          ./release_assets/linux/HFT_Algo_Trader_Linux
+          ./release_assets/windows/HFT_Algo_Trader_Windows.exe
+          ./release_assets/macos/HFT_Algo_Trader_MacOS
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
