@@ -71,6 +71,7 @@ jobs:
       shell: bash
       run: |
         pyinstaller --onefile --name HFT_Algo_Trader --clean \
+          --copy-metadata streamlit \
           --add-data "app.py${{ matrix.path_sep }}." \
           --add-data "config.py${{ matrix.path_sep }}." \
           --add-data "database.py${{ matrix.path_sep }}." \
@@ -85,6 +86,36 @@ jobs:
           --hidden-import sklearn \
           main.py
           
+    - name: Test Executable (Unix)
+      if: runner.os != 'Windows'
+      shell: bash
+      run: |
+        chmod +x dist/${{ matrix.exe_name }}
+        ./dist/${{ matrix.exe_name }} &
+        PID=$!
+        sleep 10
+        if ps -p $PID > /dev/null; then
+           echo "Application started successfully."
+           kill $PID
+        else
+           echo "Application crashed!"
+           exit 1
+        fi
+
+    - name: Test Executable (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        $proc = Start-Process -FilePath "dist\${{ matrix.exe_name }}" -PassThru -NoNewWindow
+        Start-Sleep -Seconds 10
+        if ($proc.HasExited) {
+            Write-Error "Application crashed with exit code $($proc.ExitCode)!"
+            exit 1
+        } else {
+            Stop-Process -Id $proc.Id
+            Write-Host "Application started successfully."
+        }
+
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
